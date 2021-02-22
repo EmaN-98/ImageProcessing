@@ -1,0 +1,254 @@
+
+void snap()
+{
+	VideoCapture cap("Videos/hand3.avi");
+	//VideoCapture cap(0); // open the deafult camera (i.e. the built in web cam)
+	if (!cap.isOpened()) // opening the video device failed
+	{
+		printf("Cannot open video capture device.\n");
+		return;
+	}
+
+	Mat frame;
+	char numberStr[256];
+	char fileName[256];
+
+	// video resolution
+	Size capS = Size((int)cap.get(CV_CAP_PROP_FRAME_WIDTH),
+		(int)cap.get(CV_CAP_PROP_FRAME_HEIGHT));
+
+	// Display window
+	const char* WIN_SRC = "Src"; //window for the source frame
+	namedWindow(WIN_SRC, CV_WINDOW_AUTOSIZE);
+	cvMoveWindow(WIN_SRC, 0, 0);
+
+	const char* WIN_DST = "Snapped"; //window for showing the snapped frame
+	namedWindow(WIN_DST, CV_WINDOW_AUTOSIZE);
+	cvMoveWindow(WIN_DST, capS.width + 10, 0);
+
+	char c;
+	int frameNum = -1;
+	int frameCount = 0;
+
+	for (;;)
+	{
+		cap >> frame; // get a new frame from camera
+		if (frame.empty())
+		{
+			printf("End of the video file\n");
+			break;
+		}
+
+		++frameNum;
+
+		imshow(WIN_SRC, frame);
+
+		c = cvWaitKey(10);  // waits a key press to advance to the next frame
+		if (c == 27) {
+			// press ESC to exit
+			printf("ESC pressed - capture finished");
+			break;  //ESC pressed
+		}
+		if (c == 115) { //'s' pressed - snapp the image to a file
+			frameCount++;
+			fileName[0] = NULL;
+			sprintf(numberStr, "%d", frameCount);
+			strcat(fileName, "Images/Proiect3/A");
+			if (frameCount < 10) { strcat(fileName, "0000"); }
+			else if (frameCount >= 10 && frameCount < 100) { strcat(fileName, "000"); }
+			strcat(fileName, numberStr);
+			strcat(fileName, ".bmp");
+			bool bSuccess = imwrite(fileName, frame);
+			if (!bSuccess)
+			{
+				printf("Error writing the snapped image\n");
+			}
+			else
+				imshow(WIN_DST, frame);
+		}
+	}
+}
+
+
+
+void proiect()
+{
+	snap();   //functia de snap modificata pentru a folosi un video, nu camera web...
+		  //...si imi salvez imaginile rezultate intr-un folder, cu nume de tip A00001, A00002, A0000n, pentru a le putea apoi lua in ordine 
+
+	///////////
+	
+	Mat frame, prev, gray, backgnd, diff, dst; // crntent frames: original (frame) and converted to grayscale (crnt)
+	int frameNum = -1;
+	int method = 0;
+	printf("method (1/2/3):");
+	scanf("%d", &method);
+	printf("method:: %d", method);
+
+	// method = 
+	// 1 - frame difference
+	// 2 - running average
+	// 3 - running average with selectivity
+
+	unsigned char Th = 15;
+	if (method == 3) { Th =33; }
+	const double alpha = 0.05;
+	Mat element = getStructuringElement(MORPH_CROSS, Size(3, 3));
+
+	char folderName[MAX_PATH]= "D:/Proiect";
+	char fname[MAX_PATH];
+	FileGetter fg(folderName, "bmp");
+	const char* WIN_DST = "Dst";
+
+	while (fg.getNextAbsFile(fname))// citeste in fname numele caii complete 
+	// la cate un fisier bitmap din secventa
+	{
+		frame = imread(fname, CV_LOAD_IMAGE_COLOR);
+		++frameNum;
+
+		cvtColor(frame, gray, CV_BGR2GRAY);			//transform din RGB in grayscale
+		GaussianBlur(gray, gray, Size(5, 5), 0.8, 0.8);		//aplic un blur gaussian
+
+		dst = Mat::zeros(gray.size(), gray.type());
+		const int channels_gray = gray.channels();
+		if (channels_gray > 1)
+			return;
+		// am cele 3 metode de background substraction, dintre care, pentru teste, am utilizat-o in special pe a 3-a care dadea rezultate mai clare
+		if (frameNum > 0)
+		{
+			double t = (double)getTickCount();
+
+			absdiff(gray, backgnd, diff);
+
+			if (method == 1)
+			{
+				backgnd = gray.clone();
+			}
+			else if (method == 2)
+			{
+				addWeighted(gray, alpha, backgnd, 1.0 - alpha, 0, backgnd);
+			}
+
+			for (int i = 0;i < diff.rows;i++)
+				for (int j = 0;j < diff.cols;j++) {
+					if (diff.at<uchar>(i, j) > Th)
+					{
+						dst.at<uchar>(i, j) = 255;
+					}
+					else
+					{
+						if (method == 3)
+						{
+							backgnd.at<uchar>(i, j) = alpha * (int)gray.at<uchar>(i, j) + (1.0 - alpha)*(int)backgnd.at<uchar>(i, j);
+						}
+					}
+				}
+			
+			//am aplicat 2 dilatari urmate de 2 eroziuni pentru a mai scapa de zgomote
+			dilate(dst, dst, element, Point(-1, -1), 2);
+			erode(dst, dst, element, Point(-1, -1), 2);
+		
+			//afisez timpul de executie pentru algoritm la fiecare frame
+			t = ((double)getTickCount() - t) / getTickFrequency();
+			printf("%d - %.3f [ms]\n", frameNum, t * 1000);
+			
+			//afisez toate fazele procesarii unui frame, de la sursa(source) pana la destinatie(object2), pentru o urmarire mai usoara a executiei
+			imshow("source", frame);
+			imshow("dest", dst); 
+			imshow("diff", diff);
+			imshow("backgnd", backgnd);
+			
+			//creez pentru fiecare cate un obiect de tip mylist care contine aria si coordonatele lui, pe care il salvez in vectorul candidates
+			Mat temp = dst.clone();
+			vector<vector<Point> > contours;
+			vector<Vec4i> hierarchy;
+			Mat objects = Mat::zeros(temp.rows, temp.cols, CV_8UC3); // matrice (3 canale) folositea pentru afisarea(color) a obiectelor detectate din regiunea de interes
+			findContours(temp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+			Moments m;
+			if (contours.size() > 0)
+			{
+				// iterate through all the top-level contours,
+				// draw each connected component with its own random color
+				int idx = 0;
+				for (; idx >= 0; idx = hierarchy[idx][0])
+				{
+					const vector<Point>& c = contours[idx];
+					m = moments(c); // calcul momente
+					double arie = m.m00; // aria componentei conexe idx
+					double xc = m.m10 / m.m00; // coordonata x a CM al componentei conexe idx
+					double yc = m.m01 / m.m00; // coordonata y a CM al componentei conexe idx
+					Scalar color(rand() & 255, rand() & 255, rand() & 255);
+					drawContours(objects, contours, idx, color, CV_FILLED, 8, hierarchy);
+					mylist elem;
+					elem.arie = arie;
+					elem.xc = xc;
+					elem.yc = yc;
+					candidates.push_back(elem);
+				}
+			}
+			imshow("objects", objects);
+
+			//calculez aria maxima si identific obiectul cu arie maxima
+			double arieMax = 0.0;
+			mylist elemMax;
+			for (mylist el : candidates)
+			{
+				if (el.arie > arieMax)
+				{
+					elemMax = el;
+					arieMax = el.arie;
+				}
+			}
+			
+			//repet operatiunea de data aceasta comparand aria fiecarui obiect cu aria maxima si afisez numai obiectul cu arie maxima cu o culoare random
+			//..poate ca puteam evita repetitia unor operatii in aceasta faza
+			candidates.clear();
+			Mat temp2 = dst.clone();
+			vector<vector<Point> > contours2;
+			vector<Vec4i> hierarchy2;
+			Mat objects2 = Mat::zeros(temp2.rows, temp2.cols, CV_8UC3); // matrice (3 canale) folositea pentru afisarea(color) a obiectelor detectate din regiunea de interes
+			findContours(temp2, contours2, hierarchy2, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+			Moments m2;
+			if (contours2.size() > 0)
+			{
+				// iterate through all the top-level contours,
+				// draw each connected component with its own random color
+				int idx = 0;
+				for (; idx >= 0; idx = hierarchy2[idx][0])
+				{
+					const vector<Point>& c = contours2[idx];
+					m2 = moments(c); // calcul momente
+					double arie = m2.m00; // aria componentei conexe idx
+					double xc = m2.m10 / m2.m00; // coordonata x a CM al componentei conexe idx
+					double yc = m2.m01 / m2.m00; // coordonata y a CM al componentei conexe idx
+					Scalar color(rand() & 255, rand() & 255, rand() & 255);
+					if (arie == arieMax)
+					{
+						drawContours(objects2, contours2, idx, color, CV_FILLED, 8, hierarchy2);
+					}
+					mylist elem;
+					elem.arie = arie;
+					elem.xc = xc;
+					elem.yc = yc;
+					if (elem.arie >= arieMax)
+					{
+						candidates.push_back(elem);
+					}
+				}
+			}
+			imshow("objects2", objects2);
+		}
+		else
+		{
+			backgnd = gray.clone();
+		}
+		//am afisat atat cazul in care toate obiectele identificate sunt desenate in output(objects1), cat si cel in care doar elementul cu arie maxima apare(in objects2)
+
+		char c = cvWaitKey(0); 
+		if (c == 27) {
+			printf("ESC pressed - playback finished\n\n");
+			break; 
+		}
+	}
+
+}

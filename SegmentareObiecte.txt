@@ -1,0 +1,482 @@
+
+typedef struct {
+	int X1;   
+	int X2;
+} labelsPair;   //structura pt a pastra o pereche de etichete
+typedef struct { 
+	vector<int> V;
+}eqclass;         //structura pt a pastra o clasa de echivalenta
+void iterate()
+{
+	char fname[MAX_PATH];
+	while (openFileDlg(fname))
+	{
+		Mat src = imread(fname, CV_LOAD_IMAGE_GRAYSCALE);  //citim imaginea stocandu-i pixelii intr-o matrice
+		int height = src.rows;
+		int width = src.cols;
+
+		vector <labelsPair> eqtable;    //pastreaza perechile de etichete ce corespund coliziunilor 
+		Mat label = Mat::zeros(height, width, CV_16UC1);   //pastreaza eticheta fiecarui pixel
+		vector <int> eqlabel;      //pastreaza eticheta corespunzaatoare fiecarei clase de echivalenta
+
+		// Etichetare Secventiala -primul agloritm prezentat in cursul 4
+		int lbl = 0;
+		for (int L = 0;L < height;L++)
+		{
+			for (int P = 0;P < width;P++)
+			{
+				if (src.at<uchar>(L, P) == 0)   //pentru fiecare pixel apartinand obiectului (0=pixel negru)..
+				{
+					lbl++;
+					label.at<ushort>(L, P) = lbl;   //..inseram cate o eticheta unica in matricea label..
+				}
+				else
+					label.at<ushort>(L, P) = 0;   //..sau 0 daca pixelul nu face parte din obiect=devine negru; vom avea background negru in loc de alb
+			}
+		}
+		
+		printf("label -initializare:  ");
+		for (int i = 0;i < height;i++)
+			for (int j = 0;j < width;j++)
+				printf("%d , ", label.at<ushort>(i, j));
+
+		bool CHANGE = false; int M = 0;
+		int dj[8] = { 1,  1,  0, -1, -1, -1, 0, 1 };
+		int di[8] = { 0, -1, -1, -1,  0,  1, 1, 1 };
+		std::queue<Point> V;
+
+		do {
+			CHANGE = false;
+			//Iteratie top-down        
+			for (int L = 1;L < height-1;L++)
+			{
+				for (int P = 1;P < width-1;P++)
+				{
+					if (label.at<ushort>(L, P) != 0)
+					{
+						int minim = MAXINT;
+						for (int k = 0; k < 8; k++)
+						{
+							if (src.at<uchar>(L + di[k], P + dj[k]) == 0)
+							{
+								int lblVecin = label.at<ushort>(L + di[k], P + dj[k]);
+								if (lblVecin < minim)
+									minim = lblVecin;
+							}
+
+						}
+						M = min(minim, label.at<ushort>(L, P));   //asignam minimul dintre etichetele vecinilor pixelului curent si eticheta lui
+						if (M != label.at<ushort>(L, P))
+							CHANGE = true;
+						label.at<ushort>(L, P) = M;
+					}
+				}
+			}
+
+			//Iteratie bottom-up  - aceeasi operatie, dar parcurgand matricea de jos in sus
+			for (int L = height - 2; L > 0;L--)
+			{
+				for (int P = width - 2;P > 0;P--)
+				{
+					if (label.at<ushort>(L, P) != 0)
+					{
+						int minim = MAXINT;
+						for (int k = 0; k < 8; k++)
+						{
+							if (src.at<uchar>(L + di[k], P + dj[k]) == 0)
+							{
+								int lblVecin = label.at<ushort>(L + di[k], P + dj[k]);
+								if (lblVecin < minim)
+									minim = lblVecin;
+							}
+
+						}
+						M = min(minim, label.at<ushort>(L, P));
+						if (M != label.at<ushort>(L, P))
+							CHANGE = true;
+						label.at<ushort>(L, P) = M;
+					}
+				}
+			}
+			
+		} while (CHANGE == true);
+		
+		printf("\nlabel- iterate:  ");
+		for (int i = 0;i < height;i++)
+			for (int j = 0;j < width;j++) {
+				printf("%d , ", label.at<ushort>(i, j));
+		
+			}
+		
+		Mat dst = Mat::zeros(src.size(), CV_8UC3);
+								//afisam obiectele cu culori diferite in functie de eticheta pixelilor fiecaruia
+		Scalar colorLUT[1000] = { 0 };
+		Scalar color;
+		for (int i = 1;i < 1000;i++)
+		{
+			Scalar color(rand() & 255, rand() & 255, rand() & 255);
+			colorLUT[i] = color;
+		}
+		colorLUT[0] = Scalar(0, 0, 0);
+		for (int i = 1; i < height - 1; i++)      
+			for (int j = 1; j < width - 1; j++)
+			{
+				Scalar color = colorLUT[label.at<ushort>(i, j)%1000]; 
+				dst.at<Vec3b>(i, j)[0] = color[0];
+				dst.at<Vec3b>(i, j)[1] = color[1];
+				dst.at<Vec3b>(i, j)[2] = color[2];
+			}
+		//cout << "label [top-down+bottom-up] = " << endl << " " << label << endl << endl;
+		imshow("source", src);
+		imshow("final", dst);
+		waitKey();
+	}
+}
+
+
+
+vector <eqclass> resolve2(vector<labelsPair> eqtable, int maxim)
+{       //functia resolve() ce va returna clasele de echivalenta
+	std::queue<Point> Q;
+	vector <eqclass> eqclasses, Zero;
+	eqclasses.resize(100);
+	int newLabels[1000] = { 0 };
+
+	int eq = 0;
+	for (int L = 1;L <= maxim; L++)
+	{
+		if (newLabels[L] == 0)
+		{
+			eq++;
+			std::queue<int> Q;
+			newLabels[L] = eq;
+			Q.push(L);
+			while (!Q.empty())
+			{
+				int M = Q.front();
+				Q.pop();
+				for (labelsPair pair : eqtable) //parcurgem elemente din aceeasi pereche cu M in eqtable
+				{
+					if (pair.X1 == M)
+					{
+						if (newLabels[pair.X2] == 0)
+						{
+							newLabels[pair.X2] = newLabels[M];
+							Q.push(pair.X2);
+						}
+
+					}
+					else if (pair.X2 == M)
+					{
+						if (newLabels[pair.X1] == 0)
+						{
+							newLabels[pair.X1] = newLabels[M];
+							Q.push(pair.X1);
+						}
+
+					}
+				}
+			}
+		}
+	}
+	for (int i = 1;i < maxim; i++)
+	{
+
+		eqclasses[newLabels[i]].V.push_back(i);
+	}
+
+
+	return eqclasses;
+
+}
+
+void algClasic2()
+{//Algoritmul Clasic bazat pe clase de echivalenta
+	char fname[MAX_PATH];
+	while (openFileDlg(fname))
+	{
+		Mat src = imread(fname, CV_LOAD_IMAGE_GRAYSCALE);  //citim imaginea stocandu-i pixelii intr-o matrice
+		int height = src.rows;
+		int width = src.cols;
+
+		vector <labelsPair> eqtable;    //pastreaza perechile de etichete ce corespund coliziunilor 
+		Mat label = Mat::zeros(height, width, CV_16UC1);   //pastreaza eticheta fiecarui pixel
+		vector <int> eqlabel;      //pastreaza eticheta corespunzaatoare fiecarei clase de echivalenta
+		eqlabel.resize(100);
+		int dj[8] = { 1,  1,  0, -1, -1, -1, 0, 1 };
+		int di[8] = { 0, -1, -1, -1,  0,  1, 1, 1 };
+
+		//"Top-down pass 1"            
+			 
+		int lbl = 0, maxim =0;
+		for (int L = 1;L < height-1;L++)
+		{
+			
+			for (int P = 1;P < width-1;P++)
+			{
+				if (src.at<uchar>(L, P) == 0 && label.at<ushort>(L,P)==0)  //0=negru=apartine obiectului si nu este etichetat
+				{
+					
+					std::queue<Point> V;        //in V punem vecinii etichetati ai pixelului
+
+					for (int k = 0; k < 8; k++)
+					{
+						if (src.at<uchar>(L + di[k], P + dj[k]) == 0)
+						{
+							if (label.at<ushort>(L + di[k], P + dj[k]) > 0)
+							{
+								Point neighbor = Point(P + dj[k], L + di[k]);
+								V.push(neighbor);
+							}
+						}
+					}
+					int M;
+					if (V.empty())    //daca nu are vecini etichetati, ii dam o eticheta noua
+					{
+						lbl++;
+						//printf("%d", lbl);
+						M = lbl;
+					}
+					else   //daca are vecini etichetati, ii dam eticheta minima dintre ale lor
+					{
+						int min = MAXINT;
+						while (!V.empty()) {
+							
+							Point oldest = V.front();	//luam vecinii pe rand din coada
+							int xx = oldest.y;
+							int yy = oldest.x;
+							V.pop();
+						
+									int lblVecin = label.at<ushort>(xx, yy);
+									if (lblVecin < min)
+										min = lblVecin;	//..si calculam eticheta minima
+						
+						}
+						M = min;
+					}
+					
+					label.at<ushort>(L, P) = M;
+					if (label.at<ushort>(L, P) > maxim) maxim = label.at<ushort>(L, P);
+					//for X in LABELS(V) and X<>M ADD(X, M, EQTABLE) 
+					for (int k = 0; k < 8; k++)
+					{                              //adaugam perechea de etichete in vectorul eqtable
+						int X = label.at<ushort>(L + di[k], P + dj[k]);
+						if (X != M && X>0)
+						{
+							labelsPair l = labelsPair{ M, X };
+							eqtable.push_back(l);   //vector cu perechile de etichete
+						}
+					}
+				}
+			}
+		}
+
+		//"Find equivalence classes"
+		vector <eqclass> eqclasses;
+		eqclasses.resize(100); 
+		eqclasses= resolve2(eqtable, maxim); //functia resolve() va fi implementata separat returnand clasele de echivalenta
+		
+		for (int i = 0;i < eqclasses.size();i++)
+		{
+			int minim = MAXINT;
+			eqclass e = eqclasses[i];  //luam fiecare clasa de echivalenta..
+			for (int j = 0;j < e.V.size();j++)
+				if (e.V[j] < minim)
+					minim = e.V[j];
+			eqlabel[i] = minim;       //..si ii calculam eticheta minima din ea, punand-o in eqlabel ->aceasta eticheta va reprezenta clasa respectica
+		}
+
+		//"Top-down pass 2"
+		for (int L = 1;L < height-1;L++)
+			for (int P = 1;P < width-1;P++)
+				if (src.at<uchar>(L, P) == 0)  // //parcurgem pixelii obiectului..
+				{
+					int eq = 0;
+					for (int i = 0;i < eqclasses.size();i++)  //..si fiecare clasa de echivalenta..
+					{
+						eqclass e = eqclasses[i];
+						for (int j = 0;j < e.V.size();j++)
+							if (label.at<ushort>(L, P) == e.V[j])  //..identificand carei clase ii apartine eticheta pixelului curent..
+								eq = i;
+					}
+					label.at<ushort>(L, P) = eqlabel[eq];   //..pentru a-l putea eticheta cu valoarea corespunzatoare a acelei clase
+				}
+
+		imshow("input image", src);
+		printf("\nEtichetele (label) : \n");
+		for (int L = 1;L < height - 1;L++)
+		{
+			for (int P = 1;P < width - 1;P++)
+			{
+				printf("%d ",label.at<ushort>(L, P));  
+				
+			}
+		}
+		printf("\n Eticheta maxima: %d\n", maxim);
+		printf("\Perechile de etichete -eqtable[]\n");
+
+		for (int i = 0;i < eqtable.size();i++)
+			printf("(%d %d), ", eqtable[i].X1, eqtable[i].X2);
+		
+		printf("\nClasele de ehivalenta -eqclasses():\n");
+		for (int i = 0;i < eqclasses.size();i++)
+		{	
+			eqclass e = eqclasses[i];
+			if (e.V.size() > 0)
+			{
+				printf("\nClass no %d: ", i);
+				for (int j = 0;j < e.V.size();j++)
+					printf("%d, ", e.V[j]);
+			}
+			
+		}
+		Mat dst = Mat::zeros(src.size(), CV_8UC3);
+									// afisam obiectele cu culori diferite in functie de eticheta pixelilor fiecaruia care e unica
+		Scalar colorLUT[1000] = { 0 };
+		Scalar color;
+		for (int i = 1;i < 1000;i++)
+		{
+			Scalar color(rand() & 255, rand() & 255, rand() & 255);
+			colorLUT[i] = color;
+		}
+		colorLUT[0] = Scalar(0, 0, 0);
+		for (int i = 1; i < height - 1; i++)
+			for (int j = 1; j < width - 1; j++)
+			{
+				Scalar color = colorLUT[label.at<ushort>(i, j) % 1000]; 
+				dst.at<Vec3b>(i, j)[0] = color[0];
+				dst.at<Vec3b>(i, j)[1] = color[1];
+				dst.at<Vec3b>(i, j)[2] = color[2];
+			}
+		
+		imshow("final", dst);
+
+		waitKey();
+	}
+}
+
+void algEdges5_2_2()
+{
+	char fname[MAX_PATH];
+	while (openFileDlg(fname))
+	{
+		Mat src = imread(fname, CV_LOAD_IMAGE_GRAYSCALE);  //citim imaginea stocandu-i pixelii intr-o matrice
+		int height = src.rows;
+		int width = src.cols;
+
+		Mat label = Mat::zeros(height, width, CV_16UC1);   //pastreaza eticheta fiecarui pixel
+		vector <vector<int>> edges;    
+		edges.resize(1000);
+		int dj[8] = { 1,  1,  0, -1, -1, -1, 0, 1 };
+		int di[8] = { 0, -1, -1, -1,  0,  1, 1, 1 };         
+			
+		int lbl = 0;
+		for (int i = 0;i < height - 1;i++)
+		{
+
+			for (int j = 0;j < width - 1;j++)
+			{
+				if (src.at<uchar>(i, j) == 0 && label.at<ushort>(i, j) == 0)  //0=negru=apartine obiectului si nu este etichetat
+				{
+					vector<int> L; 
+					for (int k = 0; k < 8; k++)
+					{
+						if (src.at<uchar>(i + di[k], j + dj[k]) == 0)
+						{
+							if (label.at<ushort>(i + di[k], j + dj[k]) > 0)
+							{
+								L.push_back(label.at<ushort>(i + di[k], j + dj[k]));
+							}
+						}
+					}
+					
+					if (L.size()==0)    //daca nu are vecini etichetati, ii dam o eticheta noua
+					{
+						lbl++;
+						label.at<ushort>(i, j) = lbl;
+					}
+					else   //daca are vecini etichetati, ii dam eticheta minima dintre ale lor
+					{
+						int x = MAXINT;
+						for(int lblVecin:L)
+						{
+							if (lblVecin < x)
+								x = lblVecin;
+						}
+						label.at<ushort>(i, j) = x;
+						for (int y : L)
+						{
+							if (y != x)
+							{
+								edges[x].push_back(y); //stocam in edges[x] etichetele y din aceeasi clasa de echivalenta cu el
+								edges[y].push_back(x);
+							}
+						}
+					}
+
+				}
+			}
+		}
+		
+		int newlabel = 0;
+		int newlabels[1000] = { 0 };
+											//inlocuim etichetele din aceeasi clasa de echivalenta cu o eticheta noua unica
+		for (int i = 1;i <= lbl;i++)
+		{
+			if (newlabels[i] == 0)
+			{
+				
+				newlabel++; 
+				std::queue<int> Q;
+				newlabels[i] = newlabel;
+				Q.push(i);
+				while (!Q.empty())
+				{
+					int x = Q.front();
+					Q.pop();
+					for(int y:edges[x])
+						if (newlabels[y] == 0)
+						{
+							newlabels[y] = newlabel;
+							Q.push(y);
+						}
+				}
+			}
+		}
+														// actualizam matricea de etichete
+		for (int i = 0;i < height;i++)
+			for (int j = 0;j < width;j++)
+			{
+				int l = label.at<ushort>(i, j);
+				label.at<ushort>(i, j) = newlabels[l];
+			}
+
+		
+		imshow("input image", src);
+	
+		
+											//folosim acelasi mod de afisare ca si la precedentii algortimi
+		Mat dst = Mat::zeros(src.size(), CV_8UC3);
+
+		Scalar colorLUT[1000] = { 0 };
+		Scalar color;
+		for (int i = 1;i < 1000;i++)
+		{
+			Scalar color(rand() & 255, rand() & 255, rand() & 255);
+			colorLUT[i] = color;
+		}
+		colorLUT[0] = Scalar(0, 0, 0);
+		for (int i = 1; i < height - 1; i++)
+			for (int j = 1; j < width - 1; j++)
+			{
+				Scalar color = colorLUT[label.at<ushort>(i, j) % 1000]; 
+				dst.at<Vec3b>(i, j)[0] = color[0];
+				dst.at<Vec3b>(i, j)[1] = color[1];
+				dst.at<Vec3b>(i, j)[2] = color[2];
+			}
+
+		imshow("final", dst);
+
+		waitKey();
+	}
+}
